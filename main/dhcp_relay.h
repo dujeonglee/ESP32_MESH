@@ -1,5 +1,6 @@
 #ifndef DJMESH_DHCP_RELAY_H
 #define DJMESH_DHCP_RELAY_H
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C"
