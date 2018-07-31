@@ -17,6 +17,8 @@
 #include "lwip/udp.h"
 #include "lwip/dhcp.h"
 #include "routing.h"
+#include "link_manager.h"
+#include "dhcp_relay.h"
 
 static const char *TAG = "DHCP Relay";
 
@@ -80,11 +82,11 @@ u8_t dhcp_relay_recv(void *arg, struct raw_pcb *pcb, struct pbuf *p, const ip_ad
             struct pbuf *new_p = pbuf_alloc(PBUF_LINK, p->tot_len, PBUF_RAM);
             if (!new_p)
             {
-                printf("Buffer is not allocated\n");
+                ESP_LOGE(TAG, "Buffer is not allocated\n");
             }
             if (pbuf_copy(new_p, p) == ERR_ARG)
             {
-                printf("copy failed\n");
+                ESP_LOGE(TAG, "copy failed\n");
             }
             if (sta_interface->output(sta_interface, new_p, &dest_addr) != 0)
             {
@@ -105,11 +107,11 @@ u8_t dhcp_relay_recv(void *arg, struct raw_pcb *pcb, struct pbuf *p, const ip_ad
             struct pbuf *new_p = pbuf_alloc(PBUF_IP, p->tot_len, PBUF_RAM);
             if (!new_p)
             {
-                printf("Buffer is not allocated\n");
+                ESP_LOGE(TAG, "Buffer is not allocated\n");
             }
             if (pbuf_copy(new_p, p) == ERR_ARG)
             {
-                printf("copy failed\n");
+                ESP_LOGE(TAG, "copy failed\n");
             }
             uint8_t *p_option = (uint8_t *)dhcphdr->options;
             bool ack = false;
@@ -137,7 +139,7 @@ u8_t dhcp_relay_recv(void *arg, struct raw_pcb *pcb, struct pbuf *p, const ip_ad
             }
             if (ack && router_address)
             {
-                printf("Recv Ack\n");
+                ESP_LOGI(TAG, "Recv Ack\n");
                 *((uint32_t *)router_address) = ap_interface->ip_addr.u_addr.ip4.addr;
                 wifi_sta_list_t sta;
                 esp_wifi_ap_get_sta_list(&sta);
@@ -153,6 +155,7 @@ u8_t dhcp_relay_recv(void *arg, struct raw_pcb *pcb, struct pbuf *p, const ip_ad
                             sta.sta[i].mac[5] == dhcphdr->chaddr[5])
                         {
                             update_routing(dhcphdr->yiaddr.addr, dhcphdr->yiaddr.addr, OUT_IFACE_AP);
+                            associate_ip_and_link(sta.sta[i].mac, dhcphdr->yiaddr.addr);
                             break;
                         }
                     }
