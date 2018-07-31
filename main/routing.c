@@ -1,18 +1,30 @@
+#include "esp_log.h"
+#include "esp_timer.h"
+#include "esp_heap_trace.h"
+
 #include "routing.h"
 
+static esp_timer_handle_t periodic_route_adv_timer;
 static struct routing_entry routing_gw;
 static struct routing_entry routing_tables[MAX_ROUTING_ENTRIES];
 static uint8_t running = 0;
 
+static char* TAG = "ROUTING";
+
 static struct netif *sta_interface = NULL;
 static struct netif *ap_interface = NULL;
+
+static void periodic_route_adv_timer_callback(void* arg)
+{
+    //ESP_LOGI(TAG, "Route Adv\n");
+}
 
 void update_routing(const uint32_t dest, const uint32_t next, const uint8_t out_if)
 {
     uint8_t i = 0;
     if (out_if == OUT_IFACE_INAVLID)
     {
-        printf("Routing update with invalid interface\n");
+        ESP_LOGE(TAG, "Routing update with invalid interface\n");
         return;
     }
     for (i = 0; i < MAX_ROUTING_ENTRIES; i++)
@@ -21,7 +33,7 @@ void update_routing(const uint32_t dest, const uint32_t next, const uint8_t out_
         {
             routing_tables[i].next = next;
             routing_tables[i].out_if = out_if;
-            printf("%hhu.%hhu.%hhu.%hhu -> %hhu.%hhu.%hhu.%hhu : %s\n",
+            ESP_LOGI(TAG, "Add/Update Route : %hhu.%hhu.%hhu.%hhu -> %hhu.%hhu.%hhu.%hhu : %s\n",
                    ((uint8_t *)&dest)[0],
                    ((uint8_t *)&dest)[1],
                    ((uint8_t *)&dest)[2],
@@ -41,7 +53,7 @@ void update_routing(const uint32_t dest, const uint32_t next, const uint8_t out_
             routing_tables[i].dest = dest;
             routing_tables[i].next = next;
             routing_tables[i].out_if = out_if;
-            printf("%hhu.%hhu.%hhu.%hhu -> %hhu.%hhu.%hhu.%hhu : %s\n",
+            ESP_LOGI(TAG, "Add/Update Route : %hhu.%hhu.%hhu.%hhu -> %hhu.%hhu.%hhu.%hhu : %s\n",
                    ((uint8_t *)&dest)[0],
                    ((uint8_t *)&dest)[1],
                    ((uint8_t *)&dest)[2],
@@ -63,6 +75,12 @@ void remove_routing(const uint32_t dest)
     {
         if (routing_tables[i].dest == dest)
         {
+            ESP_LOGI(TAG, "Delete Route : %hhu.%hhu.%hhu.%hhu\n",
+                   ((uint8_t *)&dest)[0],
+                   ((uint8_t *)&dest)[1],
+                   ((uint8_t *)&dest)[2],
+                   ((uint8_t *)&dest)[3]
+                   );
             routing_tables[i].out_if = OUT_IFACE_INAVLID;
             return;
         }
@@ -73,10 +91,10 @@ void update_gw(const uint32_t next, const uint8_t out_if)
 {
     if (out_if == OUT_IFACE_INAVLID)
     {
-        printf("Routing update with invalid interface\n");
+        ESP_LOGI(TAG, "Routing update with invalid interface\n");
         return;
     }
-    printf("default gw -> %hhu.%hhu.%hhu.%hhu : %s\n",
+    ESP_LOGI(TAG, "default gw -> %hhu.%hhu.%hhu.%hhu : %s\n",
            ((uint8_t *)&next)[0],
            ((uint8_t *)&next)[1],
            ((uint8_t *)&next)[2],
@@ -103,12 +121,21 @@ void start_routing(const uint32_t gateway, const uint8_t out_if)
         routing_tables[i].out_if = OUT_IFACE_INAVLID;
     }
     update_gw(gateway, out_if);
+    const esp_timer_create_args_t periodic_route_adv_timer_args = {
+        .callback = &periodic_route_adv_timer_callback,
+        .name = "route_adv"
+    };
+    ESP_ERROR_CHECK(esp_timer_create(&periodic_route_adv_timer_args, &periodic_route_adv_timer));
+    ESP_ERROR_CHECK(esp_timer_start_periodic(periodic_route_adv_timer, 1000000));
     running = 1;
+    ESP_LOGI(TAG, "Routing is started\n");
 }
 
 void stop_routing()
 {
     running = 0;
+    ESP_ERROR_CHECK(esp_timer_stop(periodic_route_adv_timer));
+    ESP_ERROR_CHECK(esp_timer_delete(periodic_route_adv_timer));
     remove_gw();
     for (uint8_t i = 0; i < MAX_ROUTING_ENTRIES; i++)
     {
@@ -117,6 +144,7 @@ void stop_routing()
         routing_tables[i].out_if = OUT_IFACE_INAVLID;
     }
     unregister_routing_function();
+    ESP_LOGI(TAG, "Routing is stopped\n");
 }
 
 bool mesh_client(const uint32_t addr)
@@ -134,6 +162,10 @@ bool mesh_client(const uint32_t addr)
 void mesh_ip4_forward(struct pbuf *p, struct ip_hdr *iphdr, struct netif *inp)
 {
     struct netif *netif = NULL;
+    ip4_addr_t next_hop = {
+        .addr = 0,
+    };
+
     char ifname[3];
     if (sta_interface == NULL)
     {
@@ -167,71 +199,55 @@ void mesh_ip4_forward(struct pbuf *p, struct ip_hdr *iphdr, struct netif *inp)
     {
         return;
     }
-/*
-    printf("Packet from %s\n", (inp == sta_interface ? "STA" : (inp == ap_interface ? "AP" : "??")));
-    printf("Length: %hu\n", ntohs(IPH_LEN(iphdr)));
-    printf("Proto: %hu\n", IPH_PROTO(iphdr));
-    printf("Src: %s\n", ip4addr_ntoa(&(iphdr->src)));
-    printf("Dst: %s\n", ip4addr_ntoa(&(iphdr->dest)));
-*/
     struct pbuf *new_p = pbuf_alloc(PBUF_LINK, p->tot_len, PBUF_RAM);
-    if (!new_p)
+    if (new_p == NULL)
     {
-        printf("Buffer is not allocated\n");
+        ESP_LOGE(TAG, "Buffer is not allocated\n");
+        return;
     }
     if (pbuf_copy(new_p, p) == ERR_ARG)
     {
-        printf("copy failed\n");
+        ESP_LOGE(TAG, "copy failed\n");
+        pbuf_free(new_p);
+        new_p = NULL;
+        return;
     }
 
+    netif = NULL;
     for (uint8_t i = 0; i < MAX_ROUTING_ENTRIES; i++)
     {
         if (routing_tables[i].dest == iphdr->dest.addr)
         {
             if (routing_tables[i].out_if == OUT_IFACE_AP)
             {
-                //printf("To AP Interface\n");
                 netif = ap_interface;
+                next_hop.addr = routing_tables[i].next;
+                break;
             }
             else if (routing_tables[i].out_if == OUT_IFACE_STA)
             {
-                //printf("To STA Interface\n");
                 netif = sta_interface;
+                next_hop.addr = routing_tables[i].next;
+                break;
             }
-            else
-            {
-                netif = NULL;
-            }
-            if (netif->mtu && (new_p->tot_len > netif->mtu))
-            {
-                if ((IPH_OFFSET(iphdr) & PP_NTOHS(IP_DF)) == 0)
-                {
-                    ip4_frag(new_p, netif, (ip4_addr_t *)&routing_tables[i].next);
-                    pbuf_free(new_p);
-                    return;
-                }
-                pbuf_free(new_p);
-                return;
-            }
-            //printf("Forwarded\n");
-            netif->output(netif, new_p, (ip4_addr_t *)&routing_tables[i].next);
-            pbuf_free(new_p);
-            return;
         }
     }
-    //printf("To Default GW\n");
-    if (sta_interface->mtu && (p->tot_len > sta_interface->mtu))
+    if(netif == NULL && inp == ap_interface)
+    {
+        netif = sta_interface;
+        next_hop.addr = routing_gw.next;
+    }
+    if (netif->mtu && (new_p->tot_len > netif->mtu))
     {
         if ((IPH_OFFSET(iphdr) & PP_NTOHS(IP_DF)) == 0)
         {
-            ip4_frag(new_p, sta_interface, (ip4_addr_t *)&routing_gw.next);
-            pbuf_free(new_p);
-            return;
+            ip4_frag(new_p, netif, &next_hop);
         }
-        pbuf_free(new_p);
-        return;
     }
-    sta_interface->output(sta_interface, new_p, (ip4_addr_t *)&routing_gw.next);
+    else
+    {
+        netif->output(netif, new_p, &next_hop);
+    }
     pbuf_free(new_p);
-    return;
+    new_p = NULL;
 }
