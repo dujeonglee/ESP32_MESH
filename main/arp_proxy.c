@@ -4,9 +4,12 @@
 #include "netif/raw_ethernet.h"
 #include "netif/etharp.h"
 #include "esp_wifi.h"
+#include "esp_log.h"
 
 #include "routing.h"
 #include "arp_proxy.h"
+
+static char* TAG = "PROXY-ARP";
 
 static struct raw_eth_pcb *pcb = NULL;
 static struct eth_addr sta_mac;
@@ -122,27 +125,30 @@ void arp_recv(void *arg, const struct raw_eth_pcb *pcb, struct pbuf *p, struct n
     }
     memcpy(&sender, arphdr->sipaddr.addrw, sizeof(sender));
     memcpy(&target, &arphdr->dipaddr.addrw, sizeof(target));
-    if(sender == 0)
+    if (sender == 0)
     {
-        printf("DHCP ARP\n");
         return;
     }
-    if((nif == ap_interface && mesh_client(sender)))
+    if ((nif == ap_interface && mesh_client(sender) /*&& arphdr->shwaddr is not in the mesh list*/))
     {
         etharp_raw(nif,
                    (struct eth_addr *)&sta_mac,
                    &arphdr->shwaddr,
-                   (struct eth_addr *)&sta_mac, (ip4_addr_t *)arphdr->dipaddr.addrw,
-                   &arphdr->shwaddr, (ip4_addr_t *)arphdr->sipaddr.addrw,
+                   (struct eth_addr *)&sta_mac,
+                   (ip4_addr_t *)arphdr->dipaddr.addrw,
+                   &arphdr->shwaddr,
+                   (ip4_addr_t *)arphdr->sipaddr.addrw,
                    ARP_REPLY);
     }
-    else if((nif == sta_interface && mesh_client(target)))
+    else if ((nif == sta_interface && mesh_client(target) /*&& arphdr->shwaddr is not in the mesh list*/))
     {
         etharp_raw(nif,
                    (struct eth_addr *)&sta_mac,
                    &arphdr->shwaddr,
-                   (struct eth_addr *)&sta_mac, (ip4_addr_t *)arphdr->dipaddr.addrw,
-                   &arphdr->shwaddr, (ip4_addr_t *)arphdr->sipaddr.addrw,
+                   (struct eth_addr *)&sta_mac,
+                   (ip4_addr_t *)arphdr->dipaddr.addrw,
+                   &arphdr->shwaddr,
+                   (ip4_addr_t *)arphdr->sipaddr.addrw,
                    ARP_REPLY);
     }
 }
@@ -156,10 +162,12 @@ void start_arp_proxy()
     {
         raw_eth_recv(pcb, arp_recv, NULL);
     }
+    ESP_LOGI(TAG, "Proxy ARP is started\n");
 }
 
 void stop_arp_proxy()
 {
     raw_eth_remove(pcb);
     pcb = NULL;
+    ESP_LOGI(TAG, "Proxy ARP is stopped\n");
 }
