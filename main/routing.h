@@ -20,6 +20,7 @@ extern "C"
     {
         uint32_t dest;
         uint32_t next;
+        uint8_t mac[6];
         uint8_t out_if;
     };
 
