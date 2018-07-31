@@ -1,5 +1,6 @@
 #ifndef DJMESH_ARP_PROXY_H
 #define DJMESH_ARP_PROXY_H
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C"
