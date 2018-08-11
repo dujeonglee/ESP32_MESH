@@ -1,9 +1,9 @@
 #include <stdio.h>
 #include <string.h>
-#include "netif/ethernet.h"
-#include "netif/raw_ethernet.h"
-#include "netif/etharp.h"
-#include "esp_wifi.h"
+// #include "netif/ethernet.h"
+// #include "netif/raw_ethernet.h"
+// #include "netif/etharp.h"
+// #include "esp_wifi.h"
 #include "esp_log.h"
 
 #include "routing.h"
@@ -74,6 +74,7 @@ void arp_recv(void *arg, const struct raw_eth_pcb *pcb, struct pbuf *p, struct n
     uint32_t sender = 0;
     struct etharp_hdr *arphdr = (struct etharp_hdr *)(p->payload + sizeof(struct eth_hdr));
     char ifname[3];
+    sta_interface = NULL;
     if (sta_interface == NULL)
     {
         ifname[0] = 's';
@@ -88,6 +89,7 @@ void arp_recv(void *arg, const struct raw_eth_pcb *pcb, struct pbuf *p, struct n
             }
         }
     }
+    ap_interface = NULL;
     if (ap_interface == NULL)
     {
         ifname[0] = 'a';
@@ -102,7 +104,10 @@ void arp_recv(void *arg, const struct raw_eth_pcb *pcb, struct pbuf *p, struct n
             }
         }
     }
-
+    if(sta_interface == NULL || ap_interface == NULL)
+    {
+        return;
+    }
     if (arphdr->hwtype != PP_HTONS(1))
     {
         return;
