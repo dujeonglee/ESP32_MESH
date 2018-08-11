@@ -98,6 +98,62 @@ void getMode(uint8_t* mode)
     nvs_close(handle);
 }
 
+void getConnectionRetry(uint8_t* retry)
+{
+    esp_err_t err;
+
+    err = nvs_flash_init();
+    if (err == ESP_ERR_NVS_NO_FREE_PAGES) {
+        // NVS partition was truncated and needs to be erased
+        // Retry nvs_flash_init
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        err = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK( err );
+
+    // Open
+    nvs_handle handle;
+    err = nvs_open("APINFO", NVS_READONLY, &handle);
+    if (err != ESP_OK) {
+        (*retry) = 0x0;
+        return;
+    }
+    err = nvs_get_u8(handle, "RETRY", retry);
+    if(err != ESP_OK)
+    {
+        (*retry) = 0x0;
+    }
+    nvs_close(handle);
+}
+
+void getMagic(uint8_t* magic)
+{
+    esp_err_t err;
+
+    err = nvs_flash_init();
+    if (err == ESP_ERR_NVS_NO_FREE_PAGES) {
+        // NVS partition was truncated and needs to be erased
+        // Retry nvs_flash_init
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        err = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK( err );
+
+    // Open
+    nvs_handle handle;
+    err = nvs_open("APINFO", NVS_READONLY, &handle);
+    if (err != ESP_OK) {
+        (*magic) = 0x0;
+        return;
+    }
+    err = nvs_get_u8(handle, "MAGIC", magic);
+    if(err != ESP_OK)
+    {
+        (*magic) = 0x0;
+    }
+    nvs_close(handle);
+}
+
 void setSSID(const char* ssid, uint32_t length)
 {
     esp_err_t err;
@@ -189,6 +245,76 @@ void setMode(const uint8_t mode)
     } 
     // Write
     err = nvs_set_u8(handle, "MODE", mode);
+    if(err != ESP_OK)
+    {
+        nvs_close(handle);
+        return;
+    }
+    err = nvs_commit(handle);
+    if(err != ESP_OK)
+    {
+        nvs_close(handle);
+        return;
+    }
+    nvs_close(handle);
+}
+
+void setConnectionRetry(const uint8_t retry)
+{
+    esp_err_t err;
+    
+    err = nvs_flash_init();
+    if (err == ESP_ERR_NVS_NO_FREE_PAGES) {
+        // NVS partition was truncated and needs to be erased
+        // Retry nvs_flash_init
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        err = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK( err );
+
+    // Open
+    nvs_handle handle;
+    err = nvs_open("APINFO", NVS_READWRITE, &handle);
+    if (err != ESP_OK) {
+        return;
+    } 
+    // Write
+    err = nvs_set_u8(handle, "RETRY", retry);
+    if(err != ESP_OK)
+    {
+        nvs_close(handle);
+        return;
+    }
+    err = nvs_commit(handle);
+    if(err != ESP_OK)
+    {
+        nvs_close(handle);
+        return;
+    }
+    nvs_close(handle);
+}
+
+void setMagic(const uint8_t magic)
+{
+    esp_err_t err;
+    
+    err = nvs_flash_init();
+    if (err == ESP_ERR_NVS_NO_FREE_PAGES) {
+        // NVS partition was truncated and needs to be erased
+        // Retry nvs_flash_init
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        err = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK( err );
+
+    // Open
+    nvs_handle handle;
+    err = nvs_open("APINFO", NVS_READWRITE, &handle);
+    if (err != ESP_OK) {
+        return;
+    } 
+    // Write
+    err = nvs_set_u8(handle, "MAGIC", magic);
     if(err != ESP_OK)
     {
         nvs_close(handle);
