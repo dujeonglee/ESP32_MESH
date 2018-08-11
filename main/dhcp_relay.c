@@ -19,6 +19,7 @@
 #include "routing.h"
 #include "link_manager.h"
 #include "dhcp_relay.h"
+#include "arp_proxy.h"
 
 static const char *TAG = "DHCP Relay";
 
@@ -32,6 +33,7 @@ u8_t dhcp_relay_recv(void *arg, struct raw_pcb *pcb, struct pbuf *p, const ip_ad
     struct netif *nif = ip_current_netif();
     struct ip_hdr *const iphdr = (struct ip_hdr *)(p->payload);
     // Find STA netif
+    sta_interface = NULL;
     if (sta_interface == NULL)
     {
         ifname[0] = 's';
@@ -46,6 +48,7 @@ u8_t dhcp_relay_recv(void *arg, struct raw_pcb *pcb, struct pbuf *p, const ip_ad
             }
         }
     }
+    ap_interface = NULL;
     if (ap_interface == NULL)
     {
         ifname[0] = 'a';
@@ -59,6 +62,10 @@ u8_t dhcp_relay_recv(void *arg, struct raw_pcb *pcb, struct pbuf *p, const ip_ad
                 break;
             }
         }
+    }
+    if(sta_interface == NULL || ap_interface == NULL)
+    {
+        return 0;
     }
     if (IPH_PROTO(iphdr) != IP_PROTO_UDP)
     {
@@ -154,8 +161,28 @@ u8_t dhcp_relay_recv(void *arg, struct raw_pcb *pcb, struct pbuf *p, const ip_ad
                             sta.sta[i].mac[4] == dhcphdr->chaddr[4] &&
                             sta.sta[i].mac[5] == dhcphdr->chaddr[5])
                         {
+                            struct eth_addr ethsrc_addr;
+                            struct eth_addr ethdst_addr;
+                            struct eth_addr hwsrc_addr; 
+                            ip4_addr_t ipsrc_addr;
+                            struct eth_addr hwdst_addr;
+                            ip4_addr_t ipdst_addr;
+                            esp_wifi_get_mac(ESP_IF_WIFI_STA, ethsrc_addr.addr);
+                            memset(ethdst_addr.addr, 0xff, 6);
+                            esp_wifi_get_mac(ESP_IF_WIFI_STA, hwsrc_addr.addr);
+                            memcpy(&ipsrc_addr.addr, &dhcphdr->yiaddr.addr, 4);
+                            memset(hwdst_addr.addr, 0x00, 6);
+                            memcpy(&ipdst_addr.addr, &dhcphdr->yiaddr.addr, 4);
+
                             update_routing(dhcphdr->yiaddr.addr, dhcphdr->yiaddr.addr, OUT_IFACE_AP);
                             associate_ip_and_link(sta.sta[i].mac, dhcphdr->yiaddr.addr);
+                            if(ESP_OK != etharp_raw(sta_interface, &ethsrc_addr, &ethdst_addr,
+                                &hwsrc_addr, &ipsrc_addr,
+                                &hwdst_addr, &ipdst_addr,
+                                ARP_REQUEST))
+                            {
+                                ESP_LOGE(TAG, "Failed to send GARP\n");
+                            }
                             break;
                         }
                     }
