@@ -75,12 +75,25 @@ static void remove_link(const uint8_t *addr)
 {
     if (links == 1)
     {
-        links = 0;
-        ESP_LOGI(TAG, "Remove link %hhx:%hhx:%hhx:%hhx:%hhx:%hhx [%hhu]\n",
-                 addr[0], addr[1], addr[2], addr[3], addr[4], addr[5],
-                 links);
-        free(head);
-        head = NULL;
+        if (
+            head->link_address[0] == addr[0] &&
+            head->link_address[1] == addr[1] &&
+            head->link_address[2] == addr[2] &&
+            head->link_address[3] == addr[3] &&
+            head->link_address[4] == addr[4] &&
+            head->link_address[5] == addr[5])
+        {
+            if (head->ip_address != 0)
+            {
+                remove_routing(head->ip_address, head->link_address);
+            }
+            links = 0;
+            ESP_LOGI(TAG, "Remove link %hhx:%hhx:%hhx:%hhx:%hhx:%hhx [%hhu]\n",
+                     addr[0], addr[1], addr[2], addr[3], addr[4], addr[5],
+                     links);
+            free(head);
+            head = NULL;
+        }
         return;
     }
     else
@@ -104,13 +117,13 @@ static void remove_link(const uint8_t *addr)
                 {
                     pos->next->prev = pos->prev;
                 }
-                if(pos->ip_address != 0)
+                if (pos->ip_address != 0)
                 {
-                    remove_routing(pos->ip_address);
+                    remove_routing(pos->ip_address, pos->link_address);
                 }
                 links--;
                 ESP_LOGI(TAG, "Remove link %hhx:%hhx:%hhx:%hhx:%hhx:%hhx [%hhu]\n",
-                         addr[0], addr[1], addr[2], addr[3], addr[4], addr[5], 
+                         addr[0], addr[1], addr[2], addr[3], addr[4], addr[5],
                          links);
                 free(pos);
                 return;
@@ -122,7 +135,7 @@ static void remove_link(const uint8_t *addr)
 
 static void clear_links()
 {
-    while(links)
+    while (links)
     {
         remove_link(head->link_address);
     }
@@ -139,7 +152,7 @@ void stop_link_manager()
     ESP_LOGI(TAG, "Link manager is stopped\n");
 }
 
-void associate_ip_and_link(const uint8_t* mac, uint32_t ip)
+void associate_ip_and_link(const uint8_t *mac, uint32_t ip)
 {
     struct LinkInfo *pos;
     pos = head;
@@ -184,6 +197,7 @@ bool is_mesh_link(const unsigned char *mac)
 void onStationConnected(system_event_t *event)
 {
     system_event_sta_connected_t *info = (system_event_sta_connected_t *)&event->event_info;
+    remove_link(info->bssid);
     add_link(info->bssid, false);
 }
 
@@ -196,6 +210,7 @@ void onStationDisconnected(system_event_t *event)
 void onApStationConnected(system_event_t *event)
 {
     system_event_ap_staconnected_t *info = (system_event_ap_staconnected_t *)&event->event_info;
+    remove_link(info->mac);
     add_link(info->mac, false);
 }
 
@@ -204,4 +219,3 @@ void onApStationDisconnected(system_event_t *event)
     system_event_ap_stadisconnected_t *info = (system_event_ap_stadisconnected_t *)&event->event_info;
     remove_link(info->mac);
 }
-
