@@ -2,6 +2,7 @@
 #include "esp_timer.h"
 #include "esp_heap_trace.h"
 
+#include "arp_proxy.h"
 #include "routing.h"
 
 static esp_timer_handle_t periodic_route_adv_timer;
@@ -9,12 +10,12 @@ static struct routing_entry routing_gw;
 static struct routing_entry routing_tables[MAX_ROUTING_ENTRIES];
 static uint8_t running = 0;
 
-static char* TAG = "ROUTING";
+static char *TAG = "ROUTING";
 
 static struct netif *sta_interface = NULL;
 static struct netif *ap_interface = NULL;
 
-static void periodic_route_adv_timer_callback(void* arg)
+static void periodic_route_adv_timer_callback(void *arg)
 {
     //ESP_LOGI(TAG, "Route Adv\n");
 }
@@ -34,15 +35,15 @@ void update_routing(const uint32_t dest, const uint32_t next, const uint8_t out_
             routing_tables[i].next = next;
             routing_tables[i].out_if = out_if;
             ESP_LOGI(TAG, "Add/Update Route : %hhu.%hhu.%hhu.%hhu -> %hhu.%hhu.%hhu.%hhu : %s\n",
-                   ((uint8_t *)&dest)[0],
-                   ((uint8_t *)&dest)[1],
-                   ((uint8_t *)&dest)[2],
-                   ((uint8_t *)&dest)[3],
-                   ((uint8_t *)&next)[0],
-                   ((uint8_t *)&next)[1],
-                   ((uint8_t *)&next)[2],
-                   ((uint8_t *)&next)[3],
-                   (out_if == OUT_IFACE_STA ? "STA" : "AP"));
+                     ((uint8_t *)&dest)[0],
+                     ((uint8_t *)&dest)[1],
+                     ((uint8_t *)&dest)[2],
+                     ((uint8_t *)&dest)[3],
+                     ((uint8_t *)&next)[0],
+                     ((uint8_t *)&next)[1],
+                     ((uint8_t *)&next)[2],
+                     ((uint8_t *)&next)[3],
+                     (out_if == OUT_IFACE_STA ? "STA" : "AP"));
             return;
         }
     }
@@ -54,21 +55,21 @@ void update_routing(const uint32_t dest, const uint32_t next, const uint8_t out_
             routing_tables[i].next = next;
             routing_tables[i].out_if = out_if;
             ESP_LOGI(TAG, "Add/Update Route : %hhu.%hhu.%hhu.%hhu -> %hhu.%hhu.%hhu.%hhu : %s\n",
-                   ((uint8_t *)&dest)[0],
-                   ((uint8_t *)&dest)[1],
-                   ((uint8_t *)&dest)[2],
-                   ((uint8_t *)&dest)[3],
-                   ((uint8_t *)&next)[0],
-                   ((uint8_t *)&next)[1],
-                   ((uint8_t *)&next)[2],
-                   ((uint8_t *)&next)[3],
-                   (out_if == OUT_IFACE_STA ? "STA" : "AP"));
+                     ((uint8_t *)&dest)[0],
+                     ((uint8_t *)&dest)[1],
+                     ((uint8_t *)&dest)[2],
+                     ((uint8_t *)&dest)[3],
+                     ((uint8_t *)&next)[0],
+                     ((uint8_t *)&next)[1],
+                     ((uint8_t *)&next)[2],
+                     ((uint8_t *)&next)[3],
+                     (out_if == OUT_IFACE_STA ? "STA" : "AP"));
             return;
         }
     }
 }
 
-void remove_routing(const uint32_t dest)
+void remove_routing(const uint32_t dest, const uint8_t *hw)
 {
     uint8_t i = 0;
     for (i = 0; i < MAX_ROUTING_ENTRIES; i++)
@@ -76,12 +77,47 @@ void remove_routing(const uint32_t dest)
         if (routing_tables[i].dest == dest)
         {
             ESP_LOGI(TAG, "Delete Route : %hhu.%hhu.%hhu.%hhu\n",
-                   ((uint8_t *)&dest)[0],
-                   ((uint8_t *)&dest)[1],
-                   ((uint8_t *)&dest)[2],
-                   ((uint8_t *)&dest)[3]
-                   );
+                     ((uint8_t *)&dest)[0],
+                     ((uint8_t *)&dest)[1],
+                     ((uint8_t *)&dest)[2],
+                     ((uint8_t *)&dest)[3]);
             routing_tables[i].out_if = OUT_IFACE_INAVLID;
+            // if(hw && sta_interface)
+            // {
+            //     ESP_LOGI(TAG, "Send GARP\n");
+            //     struct eth_addr src;
+            //     struct eth_addr dst;
+            //     struct eth_addr arp_hw_src;
+            //     struct eth_addr arp_hw_dst;
+            //     src.addr[0] = hw[0];
+            //     src.addr[1] = hw[1];
+            //     src.addr[2] = hw[2];
+            //     src.addr[3] = hw[3];
+            //     src.addr[4] = hw[4];
+            //     src.addr[5] = hw[5];
+            //     dst.addr[0] = 0xff;
+            //     dst.addr[1] = 0xff;
+            //     dst.addr[2] = 0xff;
+            //     dst.addr[3] = 0xff;
+            //     dst.addr[4] = 0xff;
+            //     dst.addr[5] = 0xff;
+            //     arp_hw_src.addr[0] = hw[0];
+            //     arp_hw_src.addr[1] = hw[1];
+            //     arp_hw_src.addr[2] = hw[2];
+            //     arp_hw_src.addr[3] = hw[3];
+            //     arp_hw_src.addr[4] = hw[4];
+            //     arp_hw_src.addr[5] = hw[5];
+            //     arp_hw_dst.addr[0] = 0xff;
+            //     arp_hw_dst.addr[1] = 0xff;
+            //     arp_hw_dst.addr[2] = 0xff;
+            //     arp_hw_dst.addr[3] = 0xff;
+            //     arp_hw_dst.addr[4] = 0xff;
+            //     arp_hw_dst.addr[5] = 0xff;
+            //     if(ERR_OK != etharp_raw(sta_interface, &src, &dst, &arp_hw_src, &dest, &arp_hw_dst, &dest, ARP_REQUEST))
+            //     {
+            //         ESP_LOGE(TAG, "GARP is failed\n");
+            //     }
+            // }
             return;
         }
     }
@@ -95,11 +131,11 @@ void update_gw(const uint32_t next, const uint8_t out_if)
         return;
     }
     ESP_LOGI(TAG, "default gw -> %hhu.%hhu.%hhu.%hhu : %s\n",
-           ((uint8_t *)&next)[0],
-           ((uint8_t *)&next)[1],
-           ((uint8_t *)&next)[2],
-           ((uint8_t *)&next)[3],
-           (out_if == OUT_IFACE_STA ? "STA" : "AP"));
+             ((uint8_t *)&next)[0],
+             ((uint8_t *)&next)[1],
+             ((uint8_t *)&next)[2],
+             ((uint8_t *)&next)[3],
+             (out_if == OUT_IFACE_STA ? "STA" : "AP"));
 
     routing_gw.dest = 0;
     routing_gw.next = next;
@@ -123,8 +159,7 @@ void start_routing(const uint32_t gateway, const uint8_t out_if)
     update_gw(gateway, out_if);
     const esp_timer_create_args_t periodic_route_adv_timer_args = {
         .callback = &periodic_route_adv_timer_callback,
-        .name = "route_adv"
-    };
+        .name = "route_adv"};
     ESP_ERROR_CHECK(esp_timer_create(&periodic_route_adv_timer_args, &periodic_route_adv_timer));
     ESP_ERROR_CHECK(esp_timer_start_periodic(periodic_route_adv_timer, 1000000));
     running = 1;
@@ -167,6 +202,8 @@ void mesh_ip4_forward(struct pbuf *p, struct ip_hdr *iphdr, struct netif *inp)
     };
 
     char ifname[3];
+    sta_interface = NULL;
+    ap_interface = NULL;
     if (sta_interface == NULL)
     {
         ifname[0] = 's';
@@ -195,6 +232,11 @@ void mesh_ip4_forward(struct pbuf *p, struct ip_hdr *iphdr, struct netif *inp)
             }
         }
     }
+    if (sta_interface == NULL || ap_interface == NULL)
+    {
+        ESP_LOGE(TAG, "Interface Down\n");
+        return;
+    }
     if ((ip4_addr_isbroadcast_u32(iphdr->dest.addr, inp)) || ((iphdr->dest.addr & PP_HTONL(0xf0000000UL)) == PP_HTONL(0xe0000000UL)))
     {
         return;
@@ -212,7 +254,6 @@ void mesh_ip4_forward(struct pbuf *p, struct ip_hdr *iphdr, struct netif *inp)
         new_p = NULL;
         return;
     }
-
     netif = NULL;
     for (uint8_t i = 0; i < MAX_ROUTING_ENTRIES; i++)
     {
@@ -232,10 +273,16 @@ void mesh_ip4_forward(struct pbuf *p, struct ip_hdr *iphdr, struct netif *inp)
             }
         }
     }
-    if(netif == NULL && inp == ap_interface)
+    if (netif == NULL && inp == ap_interface)
     {
         netif = sta_interface;
         next_hop.addr = routing_gw.next;
+    }
+    if (netif == NULL)
+    {
+        pbuf_free(new_p);
+        new_p = NULL;
+        return;
     }
     if (netif->mtu && (new_p->tot_len > netif->mtu))
     {
