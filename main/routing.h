@@ -25,7 +25,7 @@ extern "C"
     };
 
     void update_routing(const uint32_t dest, const uint32_t next, const uint8_t out_if);
-    void remove_routing(const uint32_t dest);
+    void remove_routing(const uint32_t dest, const uint8_t* hw);
     void update_gw(const uint32_t gw, const uint8_t out_if);
     void remove_gw();
 
