@@ -29,6 +29,9 @@ u8_t bcmc_fwd_recv(void *arg, struct raw_pcb *pcb, struct pbuf *p, const ip_addr
     char ifname[3];
     struct netif *nif = ip_current_netif();
     struct netif *out_nif = NULL;
+    ip4_addr_t dest_addr = {
+        .addr = 0,
+    };
     struct ip_hdr *const iphdr = (struct ip_hdr *)(p->payload);
     if ((p->flags & (PBUF_FLAG_LLBCAST | PBUF_FLAG_LLMCAST)) == 0)
     {
@@ -44,6 +47,7 @@ u8_t bcmc_fwd_recv(void *arg, struct raw_pcb *pcb, struct pbuf *p, const ip_addr
         return 0;
     }
     // Find STA netif
+    sta_interface = NULL;
     if (sta_interface == NULL)
     {
         ifname[0] = 's';
@@ -58,6 +62,7 @@ u8_t bcmc_fwd_recv(void *arg, struct raw_pcb *pcb, struct pbuf *p, const ip_addr
             }
         }
     }
+    ap_interface = NULL;
     if (ap_interface == NULL)
     {
         ifname[0] = 'a';
@@ -71,6 +76,10 @@ u8_t bcmc_fwd_recv(void *arg, struct raw_pcb *pcb, struct pbuf *p, const ip_addr
                 break;
             }
         }
+    }
+    if(sta_interface == NULL || ap_interface == NULL)
+    {
+        return 0;
     }
     out_nif = (nif == ap_interface ? sta_interface : ap_interface);
     udphdr->chksum = 0;
@@ -87,7 +96,8 @@ u8_t bcmc_fwd_recv(void *arg, struct raw_pcb *pcb, struct pbuf *p, const ip_addr
         new_p = NULL;
         return 0;
     }
-    out_nif->output(out_nif, new_p, &(iphdr->dest));
+    dest_addr.addr = iphdr->dest.addr;
+    out_nif->output(out_nif, new_p, &(dest_addr));
     pbuf_free(new_p);
     new_p = NULL;
     return 0;
