@@ -24,10 +24,14 @@
 #include "routing.h"
 #include "link_manager.h"
 #include "flash.h"
+#include "ble_main.h"
+
+static const char *TAG = "Mesh";
 
 #define AP_SSID "happyjoy2.4_EXT"
 #define AP_PW "18487140"
-
+#define CONNECTION_TIMEOUT (10000000)
+#define MAX_CONNECTION_RETRY (10)
 char SSID[32];
 uint32_t SSID_LENGTH;
 char PASSWD[64];
@@ -42,7 +46,20 @@ static EventGroupHandle_t wifi_event_group;
    to the AP with an IP? */
 const int WIFI_CONNECTED_BIT = BIT0;
 
-static const char *TAG = "Mesh";
+esp_timer_handle_t connection_timeout_handler;
+static void connection_timeout_callback(void* arg)
+{
+    uint8_t retry;
+    ESP_LOGI(TAG, "Connection timeout: Reboot\n");
+    getConnectionRetry(&retry);
+    if(retry > 0)
+    {
+        retry--;
+        setConnectionRetry(retry);
+    }
+    esp_restart();
+}
+
 
 #define NUM_RECORDS 100
 static heap_trace_record_t trace_record[NUM_RECORDS]; // This buffer must be in internal RAM
@@ -60,6 +77,7 @@ static esp_err_t event_handler(void *ctx, system_event_t *event)
     {
         uint16_t aps = 0;
         wifi_ap_record_t *apList = NULL;
+        uint8_t retry = 0;
 
         ESP_ERROR_CHECK(esp_wifi_scan_get_ap_num(&aps));
         apList = (wifi_ap_record_t *)malloc(sizeof(wifi_ap_record_t) * aps);
@@ -71,28 +89,36 @@ static esp_err_t event_handler(void *ctx, system_event_t *event)
         ESP_ERROR_CHECK(esp_wifi_scan_get_ap_records(&aps, apList));
         for (uint16_t i = 0; i < aps; i++)
         {
-            if (strcmp((char *)apList[i].ssid, "happyjoy2.4_EXT") == 0)
+            if (strcmp((char *)apList[i].ssid, SSID) == 0)
             {
-                wifi_config_t wifi_config = {
-                    .sta = 
-                    {
-                        .ssid = "happyjoy2.4_EXT",
-                        .password = "18487140",
-                    },
-                };
-                /*
+                wifi_config_t wifi_config;
                 memcpy(wifi_config.sta.ssid, SSID, SSID_LENGTH);
                 memcpy(wifi_config.sta.password, PASSWD, PASSWD_LENGTH);
-                */
 
                 ESP_ERROR_CHECK(esp_wifi_set_config(ESP_IF_WIFI_STA, &wifi_config));
                 ESP_ERROR_CHECK(esp_wifi_connect());
                 free(apList);
+                {
+                    const esp_timer_create_args_t connection_timeout_arg = {
+                        .callback = &connection_timeout_callback,
+                        .arg = NULL,
+                        .name = "connection-timeout"
+                    };
+                    ESP_ERROR_CHECK(esp_timer_create(&connection_timeout_arg, &connection_timeout_handler));
+                    ESP_ERROR_CHECK(esp_timer_start_once(connection_timeout_handler, CONNECTION_TIMEOUT));
+                    ESP_LOGI(TAG, "Start connection timeout %u\n", CONNECTION_TIMEOUT);
+                }
                 return ESP_OK;
             }
         }
         ESP_LOGE(TAG, "Cannot find the target AP\n");
         free(apList);
+        getConnectionRetry(&retry);
+        if(retry > 0)
+        {
+            retry--;
+            setConnectionRetry(retry);
+        }
         esp_restart();
     }
     break;
@@ -110,13 +136,27 @@ static esp_err_t event_handler(void *ctx, system_event_t *event)
     case SYSTEM_EVENT_STA_CONNECTED: /**< ESP32 station connected to AP */
         onStationConnected(event);
         break;
-    case SYSTEM_EVENT_STA_DISCONNECTED: /**< ESP32 station disconnected from AP */
-        xEventGroupClearBits(wifi_event_group, WIFI_CONNECTED_BIT);
-        onStationDisconnected(event);
+    case SYSTEM_EVENT_STA_DISCONNECTED: /**< ESP32 station disconnected from AP */{
+            uint8_t retry;
+            xEventGroupClearBits(wifi_event_group, WIFI_CONNECTED_BIT);
+            onStationDisconnected(event);
+            ESP_LOGI(TAG, "Connection lost\n");
+            getConnectionRetry(&retry);
+            if(retry > 0)
+            {
+                retry--;
+                setConnectionRetry(retry);
+            }
+            esp_restart();
+        }
         break;
     case SYSTEM_EVENT_STA_AUTHMODE_CHANGE: /**< the auth mode of AP connected by ESP32 station changed */
         break;
     case SYSTEM_EVENT_STA_GOT_IP: /**< ESP32 station got IP from connected AP */
+        ESP_LOGI(TAG, "Stop connection timeout handler\n");
+        ESP_ERROR_CHECK(esp_timer_stop(connection_timeout_handler));
+        ESP_ERROR_CHECK(esp_timer_delete(connection_timeout_handler));
+
         ESP_LOGI(TAG, "got ip:%s",
                  ip4addr_ntoa(&event->event_info.got_ip.ip_info.ip));
         xEventGroupSetBits(wifi_event_group, WIFI_CONNECTED_BIT);
@@ -140,6 +180,7 @@ static esp_err_t event_handler(void *ctx, system_event_t *event)
         start_bcmc_forward();
         start_arp_proxy();
         start_routing(event->event_info.got_ip.ip_info.gw.addr, OUT_IFACE_STA);
+        setConnectionRetry(MAX_CONNECTION_RETRY);
         break;
     case SYSTEM_EVENT_STA_LOST_IP: /**< ESP32 station lost IP and the IP is reset to 0 */
         break;
@@ -203,16 +244,38 @@ void wifi_init_mesh()
     ESP_ERROR_CHECK(esp_wifi_start());
 }
 
+#define MAGIC (0xcc)
 void app_main()
 {
+    uint8_t magic = 0;
+    uint8_t retry = 0;
     //Initialize NVS
     ESP_ERROR_CHECK( heap_trace_init_standalone(trace_record, NUM_RECORDS) );
     initFlash();
-    SSID_LENGTH = sizeof(SSID);
-    getSSID(SSID, &SSID_LENGTH);
-    PASSWD_LENGTH = sizeof(PASSWD);
-    getPASSWORD(PASSWD, &PASSWD_LENGTH);
-    getMode(&MODE);
-    ESP_LOGI(TAG, "Load Mesh AP Info SSID: %s PASSWD: %s Mode : %u\n", SSID, PASSWD, MODE);
-    wifi_init_mesh();
+    getMagic(&magic);
+    if(magic != MAGIC)
+    {
+        setMagic(MAGIC);
+        setSSID("NULL", strlen("NULL"));
+        setPASSWORD("NULL", strlen("NULL"));
+        setMode(0xff);
+        setConnectionRetry(0);
+    }
+    getConnectionRetry(&retry);
+    ESP_LOGI(TAG, "Retry %hhu\n", retry);
+    if(retry == 0)
+    {
+        ESP_LOGI(TAG, "Go to setup mode\n");
+        start_ble();
+    }
+    else
+    {
+        SSID_LENGTH = sizeof(SSID);
+        getSSID(SSID, &SSID_LENGTH);
+        PASSWD_LENGTH = sizeof(PASSWD);
+        getPASSWORD(PASSWD, &PASSWD_LENGTH);
+        getMode(&MODE);
+        ESP_LOGI(TAG, "Load Mesh AP Info SSID: %s PASSWD: %s Mode : %u\n", SSID, PASSWD, MODE);
+        wifi_init_mesh();
+    }
 }
