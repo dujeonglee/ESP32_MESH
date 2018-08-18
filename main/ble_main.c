@@ -38,7 +38,7 @@
 
 #include "flash.h"
 
-#define GATTS_TAG "GATTS_DEMO"
+#define GATTS_TAG "BLE-SETUP"
 
 ///Declare the static function
 static void gatts_ssid_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
@@ -55,7 +55,7 @@ static void gatts_passwd_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t
 
 #define PREPARE_BUF_MAX_SIZE 1024
 
-#define MAX_CONNECTION_RETRY   (20)
+#define MAX_CONNECTION_RETRY   (10)
 
 esp_gatt_char_prop_t a_property = 0;
 esp_attr_value_t gatt_ap_info_char =
@@ -72,9 +72,10 @@ static uint8_t adv_config_done = 0;
 static uint8_t adv_service_uuid128[32] = {
     /* LSB <--------------------------------------------------------------------------------> MSB */
     //first uuid, 16bit, [12],[13] is the value
-    0xfb, 0x34, 0x9b, 0x5f, 0x80, 0x00, 0x00, 0x80, 0x00, 0x10, 0x00, 0x00, 0xEE, 0x00, 0x00, 0x00,
+    0xfb, 0x34, 0x9b, 0x5f, 0x80, 0x00, 0x00, 0x80, 0x00, 0x10, 0x00, 0x00, (uint8_t)GATTS_SERVICE_UUID_SSID, (uint8_t)(GATTS_SERVICE_UUID_SSID>>8), 0x00, 0x00,
+
     //second uuid, 32bit, [12], [13], [14], [15] is the value
-    0xfb, 0x34, 0x9b, 0x5f, 0x80, 0x00, 0x00, 0x80, 0x00, 0x10, 0x00, 0x00, 0xFF, 0x00, 0x00, 0x00,
+    0xfb, 0x34, 0x9b, 0x5f, 0x80, 0x00, 0x00, 0x80, 0x00, 0x10, 0x00, 0x00, (uint8_t)GATTS_SERVICE_UUID_PW, (uint8_t)(GATTS_SERVICE_UUID_PW>>8), 0x00, 0x00,
 };
 
 // The length of adv data must be less than 31 bytes
@@ -196,6 +197,12 @@ static void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param
     }
 }
 
+static uint32_t write_ssid_length = 0;
+static char write_ssid_buffer[32];
+
+static uint32_t read_ssid_length = 0;
+static char read_ssid_buffer[32];
+
 static void gatts_ssid_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param) {
     switch (event) {
     case ESP_GATTS_REG_EVT:
@@ -225,15 +232,23 @@ static void gatts_ssid_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t g
         break;
     case ESP_GATTS_READ_EVT: {
         ESP_LOGI(GATTS_TAG, "GATT_READ_EVT, conn_id %d, trans_id %d, handle %d\n", param->read.conn_id, param->read.trans_id, param->read.handle);
-        esp_gatt_rsp_t rsp;
-        uint32_t length;
-        memset(&rsp, 0, sizeof(esp_gatt_rsp_t));
-        rsp.attr_value.handle = param->read.handle;
-        length = sizeof(rsp.attr_value.value);
-        getSSID((char*)rsp.attr_value.value, &length);
-        rsp.attr_value.len = length;
-        esp_ble_gatts_send_response(gatts_if, param->read.conn_id, param->read.trans_id,
-                                    ESP_GATT_OK, &rsp);
+        if(param->read.need_rsp)
+        {
+            esp_gatt_rsp_t rsp;
+            memset(&rsp, 0, sizeof(esp_gatt_rsp_t));
+            rsp.attr_value.handle = param->read.handle;
+            rsp.attr_value.offset = param->read.offset;
+            if(!param->read.is_long)
+            {
+                // First read request
+                read_ssid_length = sizeof(read_ssid_buffer);
+                getSSID(read_ssid_buffer, &read_ssid_length);
+            }
+            memcpy(rsp.attr_value.value, read_ssid_buffer + rsp.attr_value.offset, read_ssid_length - rsp.attr_value.offset);
+            rsp.attr_value.len = read_ssid_length - rsp.attr_value.offset;
+            rsp.attr_value.auth_req = ESP_GATT_AUTH_REQ_NONE;
+            esp_ble_gatts_send_response(gatts_if, param->read.conn_id, param->read.trans_id, ESP_GATT_OK, &rsp);
+        }
         break;
     }
     case ESP_GATTS_WRITE_EVT: {
@@ -241,29 +256,37 @@ static void gatts_ssid_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t g
         esp_gatt_status_t status = ESP_GATT_OK;
         if (param->write.need_rsp){
             if (param->write.is_prep){
-                esp_gatt_rsp_t *gatt_rsp = (esp_gatt_rsp_t *)malloc(sizeof(esp_gatt_rsp_t));
-                gatt_rsp->attr_value.len = param->write.len;
-                gatt_rsp->attr_value.handle = param->write.handle;
-                gatt_rsp->attr_value.offset = param->write.offset;
-                gatt_rsp->attr_value.auth_req = ESP_GATT_AUTH_REQ_NONE;
-                memcpy(gatt_rsp->attr_value.value, param->write.value, param->write.len);
-                esp_err_t response_err = esp_ble_gatts_send_response(gatts_if, param->write.conn_id, param->write.trans_id, status, gatt_rsp);
+                esp_gatt_rsp_t rsp;
+                rsp.attr_value.len = param->write.len;
+                rsp.attr_value.handle = param->write.handle;
+                rsp.attr_value.offset = param->write.offset;
+                rsp.attr_value.auth_req = ESP_GATT_AUTH_REQ_NONE;
+                memcpy(rsp.attr_value.value, param->write.value, param->write.len);
+                esp_err_t response_err = esp_ble_gatts_send_response(gatts_if, param->write.conn_id, param->write.trans_id, status, &rsp);
                 if (response_err != ESP_OK){
                     ESP_LOGE(GATTS_TAG, "Send response error\n");
                 }
-                free(gatt_rsp);
                 if (status != ESP_GATT_OK){
                     break;
                 }
+                if(write_ssid_length == 0)
+                {
+                    memset(write_ssid_buffer, 0, sizeof(write_ssid_buffer));
+                }
+                memcpy(write_ssid_buffer + write_ssid_length, (char*)param->write.value, param->write.len);
+                write_ssid_length += param->write.len;
             }else{
+                setSSID((char*)param->write.value, param->write.len);
+                setConnectionRetry(MAX_CONNECTION_RETRY);
                 esp_ble_gatts_send_response(gatts_if, param->write.conn_id, param->write.trans_id, status, NULL);
             }
         }
-        setSSID((char*)param->write.value, param->write.len);
         break;
     }
     case ESP_GATTS_EXEC_WRITE_EVT:
-        ESP_LOGI(GATTS_TAG,"ESP_GATTS_EXEC_WRITE_EVT");
+        setSSID(write_ssid_buffer, write_ssid_length);
+        setConnectionRetry(MAX_CONNECTION_RETRY);
+        write_ssid_length = 0;
         esp_ble_gatts_send_response(gatts_if, param->write.conn_id, param->write.trans_id, ESP_GATT_OK, NULL);
         break;
     case ESP_GATTS_MTU_EVT:
@@ -342,6 +365,12 @@ static void gatts_ssid_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t g
     }
 }
 
+static uint32_t write_password_length = 0;
+static char write_password_buffer[64];
+
+static uint32_t read_password_length = 0;
+static char read_password_buffer[64];
+
 static void gatts_passwd_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param) {
     switch (event) {
     case ESP_GATTS_REG_EVT:
@@ -354,15 +383,23 @@ static void gatts_passwd_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t
         break;
     case ESP_GATTS_READ_EVT: {
         ESP_LOGI(GATTS_TAG, "GATT_READ_EVT, conn_id %d, trans_id %d, handle %d\n", param->read.conn_id, param->read.trans_id, param->read.handle);
-        esp_gatt_rsp_t rsp;
-        uint32_t length;
-        memset(&rsp, 0, sizeof(esp_gatt_rsp_t));
-        rsp.attr_value.handle = param->read.handle;
-        length = sizeof(rsp.attr_value.value);
-        getPASSWORD((char*)rsp.attr_value.value, &length);
-        rsp.attr_value.len = length;
-        esp_ble_gatts_send_response(gatts_if, param->read.conn_id, param->read.trans_id,
-                                    ESP_GATT_OK, &rsp);
+        if(param->read.need_rsp)
+        {
+            esp_gatt_rsp_t rsp;
+            memset(&rsp, 0, sizeof(esp_gatt_rsp_t));
+            rsp.attr_value.handle = param->read.handle;
+            rsp.attr_value.offset = param->read.offset;
+            if(!param->read.is_long)
+            {
+                // First read request
+                read_password_length = sizeof(read_password_buffer);
+                getPASSWORD(read_password_buffer, &read_password_length);
+            }
+            memcpy(rsp.attr_value.value, read_password_buffer + rsp.attr_value.offset, read_password_length - rsp.attr_value.offset);
+            rsp.attr_value.len = read_password_length - rsp.attr_value.offset;
+            rsp.attr_value.auth_req = ESP_GATT_AUTH_REQ_NONE;
+            esp_ble_gatts_send_response(gatts_if, param->read.conn_id, param->read.trans_id, ESP_GATT_OK, &rsp);
+        }
         break;
     }
     case ESP_GATTS_WRITE_EVT: {
@@ -370,30 +407,37 @@ static void gatts_passwd_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t
         esp_gatt_status_t status = ESP_GATT_OK;
         if (param->write.need_rsp){
             if (param->write.is_prep){
-                esp_gatt_rsp_t *gatt_rsp = (esp_gatt_rsp_t *)malloc(sizeof(esp_gatt_rsp_t));
-                gatt_rsp->attr_value.len = param->write.len;
-                gatt_rsp->attr_value.handle = param->write.handle;
-                gatt_rsp->attr_value.offset = param->write.offset;
-                gatt_rsp->attr_value.auth_req = ESP_GATT_AUTH_REQ_NONE;
-                memcpy(gatt_rsp->attr_value.value, param->write.value, param->write.len);
-                esp_err_t response_err = esp_ble_gatts_send_response(gatts_if, param->write.conn_id, param->write.trans_id, status, gatt_rsp);
+                esp_gatt_rsp_t rsp;
+                rsp.attr_value.len = param->write.len;
+                rsp.attr_value.handle = param->write.handle;
+                rsp.attr_value.offset = param->write.offset;
+                rsp.attr_value.auth_req = ESP_GATT_AUTH_REQ_NONE;
+                memcpy(rsp.attr_value.value, param->write.value, param->write.len);
+                esp_err_t response_err = esp_ble_gatts_send_response(gatts_if, param->write.conn_id, param->write.trans_id, status, &rsp);
                 if (response_err != ESP_OK){
                     ESP_LOGE(GATTS_TAG, "Send response error\n");
                 }
-                free(gatt_rsp);
                 if (status != ESP_GATT_OK){
                     break;
                 }
+                if(write_password_length == 0)
+                {
+                    memset(write_password_buffer, 0, sizeof(write_password_buffer));
+                }
+                memcpy(write_password_buffer + write_password_length, (char*)param->write.value, param->write.len);
+                write_password_length += param->write.len;
             }else{
+                setPASSWORD((char*)param->write.value, param->write.len);
+                setConnectionRetry(MAX_CONNECTION_RETRY);
                 esp_ble_gatts_send_response(gatts_if, param->write.conn_id, param->write.trans_id, status, NULL);
             }
         }
-        setPASSWORD((char*)param->write.value, param->write.len);
-        setConnectionRetry(MAX_CONNECTION_RETRY);
         break;
     }
     case ESP_GATTS_EXEC_WRITE_EVT:
-        ESP_LOGI(GATTS_TAG,"ESP_GATTS_EXEC_WRITE_EVT");
+        setPASSWORD(write_password_buffer, write_password_length);
+        setConnectionRetry(MAX_CONNECTION_RETRY);
+        write_password_length = 0;
         esp_ble_gatts_send_response(gatts_if, param->write.conn_id, param->write.trans_id, ESP_GATT_OK, NULL);
         break;
     case ESP_GATTS_MTU_EVT:
